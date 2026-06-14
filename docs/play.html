@@ -4,14 +4,59 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dead City SF &mdash; Terminal</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
   <link rel="stylesheet" href="style.css">
-  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
   <script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+  <style>
+    /* Terminal layout. Shared colours/font/height come from style.css;
+       only this page's flex column and input row live here. */
+    body.terminal {
+      display: flex;
+      flex-direction: column;
+    }
+    #output {
+      flex: 1 1 auto;
+      min-height: 0;            /* let the flex item shrink so it scrolls */
+      overflow-y: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      padding: 14px 14px 0;
+      font-size: 15px;
+      line-height: 1.35;
+    }
+    #input-line {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: baseline;
+      padding: 8px 14px 14px;
+      font-size: 15px;
+      line-height: 1.35;
+    }
+    #prompt {
+      margin-right: 0.5ch;
+      white-space: pre;
+    }
+    #input {
+      flex: 1 1 auto;
+      min-width: 0;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #d4890a;
+      caret-color: #d4890a;
+      font-family: inherit;
+      font-size: inherit;
+      line-height: inherit;
+      padding: 0;
+    }
+  </style>
 </head>
 <body class="terminal">
-  <div id="terminal"></div>
+  <div id="output"></div>
+  <div id="input-line">
+    <span id="prompt">&gt;</span>
+    <input id="input" type="text" autocomplete="off" autocapitalize="off"
+           autocorrect="off" spellcheck="false" aria-label="Command input">
+  </div>
 
   <script>
   (async () => {
@@ -23,50 +68,41 @@
     const MODULES = ["__init__.py", "utils.py", "world.py", "items.py",
                      "save.py", "commands.py", "engine.py", "web.py"];
 
-    // --- terminal ---------------------------------------------------------
-    const term = new Terminal({
-      cursorBlink: true,
-      convertEol: false,
-      fontFamily: '"SFMono-Regular", Menlo, Consolas, "DejaVu Sans Mono", monospace',
-      fontSize: 15,
-      theme: {
-        background: "#0d0d0d",
-        foreground: "#d4890a",
-        cursor: "#d4890a",
-        cursorAccent: "#0d0d0d",
-        selectionBackground: "#5a3a06",
-      },
+    const output = document.getElementById("output");
+    const input = document.getElementById("input");
+
+    // Every write appends a text node and pins the scroll to the bottom —
+    // synchronous and reliable; the browser computes scrollHeight on read.
+    function out(text) {
+      output.appendChild(document.createTextNode(text));
+      output.scrollTop = output.scrollHeight;
+    }
+    function outln(text) { out((text || "") + "\n"); }
+
+    function fail(message, detail) {
+      outln("");
+      outln(message);
+      if (detail) outln("  " + detail);
+      outln("Check your connection and refresh.");
+    }
+
+    // Keep the input focused; a click anywhere refocuses it (but not while
+    // the player is selecting text to copy).
+    input.focus();
+    document.addEventListener("click", () => {
+      if (window.getSelection().toString() === "") input.focus();
     });
-    const fit = new FitAddon.FitAddon();
-    term.loadAddon(fit);
-    term.open(document.getElementById("terminal"));
-    term.focus();
 
-    fit.fit();
-    window.addEventListener("resize", () => fit.fit());
-
-    const write = (s) => term.write(s.replace(/\n/g, "\r\n"));
-    const line  = (s) => term.writeln(s);
-
-    // --- boot -------------------------------------------------------------
     let processCommand = null;
     let state = null;
     let acceptingInput = false;
-    let buffer = "";
 
-    function fail(message, detail) {
-      line("");
-      line(message);
-      if (detail) line("  " + detail);
-      line("Check your connection and refresh.");
-      requestAnimationFrame(() => term.scrollToBottom());
-    }
-
+    // --- boot -------------------------------------------------------------
     try {
-      line("Tuning the shortwave through sixty-three days of static...");
+      outln("Tuning the shortwave through sixty-three days of static...");
       const pyodide = await loadPyodide({ indexURL: PYODIDE_INDEX });
 
-      line("Dragging the grid back online, one dead block at a time...");
+      outln("Dragging the grid back online, one dead block at a time...");
       try {
         pyodide.FS.mkdir("/deadcitysf");
         for (const mod of MODULES) {
@@ -88,66 +124,51 @@ from deadcitysf.web import init_game, process_command
       const initGame = pyodide.globals.get("init_game");
       processCommand = pyodide.globals.get("process_command");
 
-      line("The ash settles. The city is waiting.");
-      term.writeln("");
+      outln("The ash settles. The city is waiting.");
+      outln("");
 
       const initResult = initGame();
       state = initResult.get(0);                 // PyProxy GameState (kept)
-      write(initResult.get(1));                   // intro + first look
+      out(initResult.get(1));                     // intro + first look
       initResult.destroy();
       initGame.destroy();
 
       acceptingInput = true;
-      promptLine();
-      requestAnimationFrame(() => term.scrollToBottom());
+      input.focus();
     } catch (err) {
       fail("The city won't wake. Something failed to load:", err.message);
       return;
     }
 
     // --- input loop -------------------------------------------------------
-    function promptLine() { term.write("\r\n> ", () => requestAnimationFrame(() => term.scrollToBottom())); }
-
     function runCommand(cmd) {
-      let output = "", gameOver = false;
+      let result = "", gameOver = false;
       try {
         const res = processCommand(state, cmd);
         const arr = res.toJs();                  // [output_string, game_over_bool]
-        output = arr[0];
+        result = arr[0];
         gameOver = arr[1];
         res.destroy();
       } catch (err) {
-        output = "\nSomething broke in the dead city:\n  " + err.message + "\n";
+        result = "\nSomething broke in the dead city:\n  " + err.message + "\n";
       }
-      write(output);
+      out(result);
       if (gameOver) {
         acceptingInput = false;
-        term.write("\r\n");
-        line("[ refresh the page to begin again ]");
-      } else {
-        promptLine();
+        input.disabled = true;
+        outln("");
+        outln("[ refresh the page to begin again ]");
       }
-      requestAnimationFrame(() => term.scrollToBottom());
     }
 
-    term.onData((data) => {
-      if (!acceptingInput) return;
-      for (const ch of data) {
-        if (ch === "\x1b") break;                // ignore arrow/function-key escapes
-        const code = ch.charCodeAt(0);
-        if (ch === "\r" || ch === "\n") {        // Enter
-          term.write("\r\n");
-          const cmd = buffer;
-          buffer = "";
-          runCommand(cmd);
-          if (!acceptingInput) break;
-        } else if (ch === "\x7f" || ch === "\b") {  // Backspace
-          if (buffer.length) { buffer = buffer.slice(0, -1); term.write("\b \b"); }
-        } else if (code >= 32 && code < 127) {   // printable ASCII
-          buffer += ch;
-          term.write(ch);
-        }
-      }
+    input.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || !acceptingInput) return;
+      e.preventDefault();
+      const cmd = input.value;
+      input.value = "";
+      outln("> " + cmd);
+      runCommand(cmd);
+      input.focus();
     });
   })();
   </script>
