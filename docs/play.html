@@ -66,6 +66,7 @@
       line(message);
       if (detail) line("  " + detail);
       line("Check your connection and refresh.");
+      term.scrollToBottom();
     }
 
     try {
@@ -105,6 +106,7 @@ from deadcitysf.web import init_game, process_command
 
       acceptingInput = true;
       promptLine();
+      term.scrollToBottom();
     } catch (err) {
       fail("The city won't wake. Something failed to load:", err.message);
       return;
@@ -132,6 +134,7 @@ from deadcitysf.web import init_game, process_command
       } else {
         promptLine();
       }
+      term.scrollToBottom();
     }
 
     term.onData((data) => {
