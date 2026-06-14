@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dead City SF &mdash; Terminal</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+</head>
+<body class="terminal">
+  <div id="terminal"></div>
+
+  <script>
+  (async () => {
+    "use strict";
+
+    const RAW_BASE =
+      "https://raw.githubusercontent.com/sevmorris/dead-city-sf/main/deadcitysf/";
+    const PYODIDE_INDEX = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
+    const MODULES = ["__init__.py", "utils.py", "world.py", "items.py",
+                     "save.py", "commands.py", "engine.py", "web.py"];
+
+    // --- terminal ---------------------------------------------------------
+    const term = new Terminal({
+      cols: 72,                       // matches the game's WIDTH
+      cursorBlink: true,
+      convertEol: false,
+      fontFamily: '"SFMono-Regular", Menlo, Consolas, "DejaVu Sans Mono", monospace',
+      fontSize: 15,
+      theme: {
+        background: "#0d0d0d",
+        foreground: "#d4890a",
+        cursor: "#d4890a",
+        cursorAccent: "#0d0d0d",
+        selectionBackground: "#5a3a06",
+      },
+    });
+    const fit = new FitAddon.FitAddon();
+    term.loadAddon(fit);
+    term.open(document.getElementById("terminal"));
+    term.focus();
+
+    function sizeTerminal() {
+      try {
+        const dims = fit.proposeDimensions();
+        if (dims && isFinite(dims.rows)) term.resize(72, Math.max(dims.rows, 10));
+      } catch (e) { /* ignore */ }
+    }
+    sizeTerminal();
+    window.addEventListener("resize", sizeTerminal);
+
+    const write = (s) => term.write(s.replace(/\n/g, "\r\n"));
+    const line  = (s) => term.writeln(s);
+
+    // --- boot -------------------------------------------------------------
+    let processCommand = null;
+    let state = null;
+    let acceptingInput = false;
+    let buffer = "";
+
+    function fail(message, detail) {
+      line("");
+      line(message);
+      if (detail) line("  " + detail);
+      line("Check your connection and refresh.");
+    }
+
+    try {
+      line("Tuning the shortwave through sixty-three days of static...");
+      const pyodide = await loadPyodide({ indexURL: PYODIDE_INDEX });
+
+      line("Dragging the grid back online, one dead block at a time...");
+      try {
+        pyodide.FS.mkdir("/deadcitysf");
+        for (const mod of MODULES) {
+          const resp = await fetch(RAW_BASE + mod);
+          if (!resp.ok) throw new Error(`${mod} (HTTP ${resp.status})`);
+          pyodide.FS.writeFile("/deadcitysf/" + mod, await resp.text());
+        }
+      } catch (err) {
+        fail("The signal drops. Could not pull the city down:", err.message);
+        return;
+      }
+
+      await pyodide.runPythonAsync(`
+import sys
+sys.path.insert(0, '/')
+from deadcitysf.web import init_game, process_command
+`);
+
+      const initGame = pyodide.globals.get("init_game");
+      processCommand = pyodide.globals.get("process_command");
+
+      line("The ash settles. The city is waiting.");
+      term.writeln("");
+
+      const initResult = initGame();
+      state = initResult.get(0);                 // PyProxy GameState (kept)
+      write(initResult.get(1));                   // intro + first look
+      initResult.destroy();
+      initGame.destroy();
+
+      acceptingInput = true;
+      promptLine();
+    } catch (err) {
+      fail("The city won't wake. Something failed to load:", err.message);
+      return;
+    }
+
+    // --- input loop -------------------------------------------------------
+    function promptLine() { term.write("\r\n> "); }
+
+    function runCommand(cmd) {
+      let output = "", gameOver = false;
+      try {
+        const res = processCommand(state, cmd);
+        const arr = res.toJs();                  // [output_string, game_over_bool]
+        output = arr[0];
+        gameOver = arr[1];
+        res.destroy();
+      } catch (err) {
+        output = "\nSomething broke in the dead city:\n  " + err.message + "\n";
+      }
+      write(output);
+      if (gameOver) {
+        acceptingInput = false;
+        term.write("\r\n");
+        line("[ refresh the page to begin again ]");
+      } else {
+        promptLine();
+      }
+    }
+
+    term.onData((data) => {
+      if (!acceptingInput) return;
+      for (const ch of data) {
+        if (ch === "\x1b") break;                // ignore arrow/function-key escapes
+        const code = ch.charCodeAt(0);
+        if (ch === "\r" || ch === "\n") {        // Enter
+          term.write("\r\n");
+          const cmd = buffer;
+          buffer = "";
+          runCommand(cmd);
+          if (!acceptingInput) break;
+        } else if (ch === "\x7f" || ch === "\b") {  // Backspace
+          if (buffer.length) { buffer = buffer.slice(0, -1); term.write("\b \b"); }
+        } else if (code >= 32 && code < 127) {   // printable ASCII
+          buffer += ch;
+          term.write(ch);
+        }
+      }
+    });
+  })();
+  </script>
+</body>
+</html>

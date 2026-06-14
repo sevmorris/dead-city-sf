@@ -26,6 +26,8 @@ class GameState:
         self.thirst = 0   # moves since last drank
         self.visited = {"house"}
         self.game_over = False
+        self.web_mode = False        # event-driven web (Pyodide) mode
+        self.pending_danger = None   # (danger, origin_id) awaiting fight/flee
 
     def is_alive(self):
         return self.health > 0

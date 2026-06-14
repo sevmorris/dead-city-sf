@@ -11,6 +11,7 @@ keeping it out of any import cycle.
 """
 
 import json
+import sys
 from pathlib import Path
 
 from .world import LOCATIONS
@@ -18,8 +19,45 @@ from .utils import wrap
 
 SAVE_VERSION = 2
 SAVE_PATH = Path.home() / ".deadcitysf.save"
+WEB_SAVE_KEY = "deadcitysf_save"
 
 _REQUIRED_STATE = ("location", "inventory", "health", "moves", "visited", "game_over")
+
+
+def _is_web():
+    """True when running under Pyodide (the browser build)."""
+    return "pyodide" in sys.modules
+
+
+def _write_save(text):
+    """Persist the save string. Raises OSError on failure (incl. JS errors)."""
+    if _is_web():
+        import js
+        try:
+            js.localStorage.setItem(WEB_SAVE_KEY, text)
+        except Exception as err:           # e.g. storage quota exceeded
+            raise OSError(str(err))
+    else:
+        SAVE_PATH.write_text(text)
+
+
+def _read_save():
+    """Return the saved JSON string, or None if no save exists.
+
+    Raises OSError on a genuine read failure. In web mode a missing key
+    reads back as JS null -> None, mirroring the CLI's FileNotFoundError.
+    """
+    if _is_web():
+        import js
+        try:
+            val = js.localStorage.getItem(WEB_SAVE_KEY)
+        except Exception as err:
+            raise OSError(str(err))
+        return None if val is None else str(val)
+    try:
+        return SAVE_PATH.read_text()
+    except FileNotFoundError:
+        return None
 
 
 def save_game(state, quiet=False):
@@ -49,7 +87,7 @@ def save_game(state, quiet=False):
         },
     }
     try:
-        SAVE_PATH.write_text(json.dumps(data, indent=2))
+        _write_save(json.dumps(data, indent=2))
     except OSError as err:
         wrap(f"Could not save the game: {err}")
         return False
@@ -69,12 +107,12 @@ def load_game(state):
     """
     # --- Read ---
     try:
-        raw = SAVE_PATH.read_text()
-    except FileNotFoundError:
-        wrap("No saved game found.")
-        return False
+        raw = _read_save()
     except OSError as err:
         wrap(f"Could not read the save file: {err}")
+        return False
+    if raw is None:
+        wrap("No saved game found.")
         return False
 
     # --- Parse ---

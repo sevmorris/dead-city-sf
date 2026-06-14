@@ -66,6 +66,9 @@ def cmd_go(state, direction):
             danger = DANGERS[dest_loc["danger"]]
             wrap(danger["description"])
             wrap("Do you fight or flee?")
+            if state.web_mode:
+                state.pending_danger = (danger, origin)
+                return
             while True:
                 choice = prompt()
                 if choice in ("fight", "f"):
