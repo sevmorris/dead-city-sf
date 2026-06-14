@@ -10,6 +10,8 @@ You begin in Noe Valley. The Golden Gate is two miles north, through a city that
 
 **[Play in your browser →](https://sevmorris.github.io/dead-city-sf/)**
 
+Or...
+
 ```
 git clone https://github.com/sevmorris/dead-city-sf.git
 cd dead-city-sf
