@@ -25,7 +25,6 @@
 
     // --- terminal ---------------------------------------------------------
     const term = new Terminal({
-      cols: 72,                       // matches the game's WIDTH
       cursorBlink: true,
       convertEol: false,
       fontFamily: '"SFMono-Regular", Menlo, Consolas, "DejaVu Sans Mono", monospace',
@@ -43,14 +42,8 @@
     term.open(document.getElementById("terminal"));
     term.focus();
 
-    function sizeTerminal() {
-      try {
-        const dims = fit.proposeDimensions();
-        if (dims && isFinite(dims.rows)) term.resize(72, Math.max(dims.rows, 10));
-      } catch (e) { /* ignore */ }
-    }
-    sizeTerminal();
-    window.addEventListener("resize", sizeTerminal);
+    fit.fit();
+    window.addEventListener("resize", () => fit.fit());
 
     const write = (s) => term.write(s.replace(/\n/g, "\r\n"));
     const line  = (s) => term.writeln(s);
@@ -113,7 +106,7 @@ from deadcitysf.web import init_game, process_command
     }
 
     // --- input loop -------------------------------------------------------
-    function promptLine() { term.write("\r\n> "); }
+    function promptLine() { term.write("\r\n> ", () => term.scrollToBottom()); }
 
     function runCommand(cmd) {
       let output = "", gameOver = false;
